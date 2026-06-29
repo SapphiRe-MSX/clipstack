@@ -18,6 +18,10 @@ ClipStack is designed to stay out of the way: it can run from the system tray wh
 - Window menu fallback for desktops without tray support.
 - Multilingual interface.
 
+## Screenshot
+
+![ClipStack main window](screenshots/clipstack-main.png)
+
 ## Requirements
 
 ClipStack requires **Python 3** and the following libraries:
