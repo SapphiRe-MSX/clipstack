@@ -38,9 +38,29 @@ PREVIEW_COL_MIN_W = 120
 PREVIEW_MIN_W = 520
 
 # -------- Icon --------
-TRAY_ICON_PNG_B64 = """
-iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAABGdBTUEAALGPC/xhBQAAAAFzUkdCAdnJLH8AAAAgY0hSTQAAeiYAAICEAAD6AAAAgOgAAHUwAADqYAAAOpgAABdwnLpRPAAAAAlwSFlzAAAuIwAALiMBeKU/dgAAAAd0SU1FB+oBCg4HLF7RjL4AAARkSURBVHja7ZtdTBxVFMd/d2aXZXaXhYJUbGpqlKJiocTWl/KgSUPSNMUqlRTQtmIsVvqFNSbESDFCbTQmWGkaNamVNn3oQzUtmzSmtInUWK2RSAIYWRI+UmxNLRRw6dLdnfFBTGxTZWZZZHZ2/8k8TO4598785szZczZzIc4lDNimATmA3UTXrwE/AMG5XEQBmoGb0wua7WieywiQgTNAUXFx+R/rni4TTsXlMsOjvz5yjZpd5X+fVgKfRzKPbYbxSqDotT0N/urttYos22SzxP7VK5f/efox8Atw0eg80gzjLwPhzVu2q2a6+Tt0cjoHnAQWRxvA8k2bdwRSUxekmDiRdwFbgCzgy+mcFTUAyZmZWS7Mry+ARmAlcNjIr5uEdfQ2cBooB2rjEYAKvAD0AA1AcbwBAJgAngHGgeNAbrwBAPABFYATOAWkz6YOiAXtnA79OxUCsoFWoNByAFI8acHKl2q0qUAg/d+e8k+dl+jp7lhlyQhwudz2ur1N/2lzsHkfPd0dRB2AvXkf4pN3jTnlriTYcgZNcZoKZGQR8NswPLQMrWi9PvufOxHffAXBW2AJAICWt4Lgjjf1LdJ64i8AJtT/mgPG+n1qx84KSRvqi/rc2cfbuL9wtbkBJHlSpfSKKrTgrajP7czMMn8EKBkLyd/2Rvy+AndT95Fm/L4eQz5yioe8XXUkudyzXn/eS2E1FAwbd1JV0MKWiIC8rXvk+XxwEQMQl9qxv1Wtz3bAZ9qKMiIA2vInjNk/sBSWrUBzJFsDQKi0EkorLdE7W/H/gLmPgCviMiPid2NFkOZgqfaoNQAckj7AK84Z9vs6fAGPlmaNQmgVBVSrr+uybRdtfCparNUMpWsZPKYW6LLtl3wgoH/cp+7uqZCGtOg3Q8eWtFF4n8mbIU9SmlSeWkVQi34zlJkcA81QRnImrzySaIZuU+vAidDgzT5D1+GU3Wr5g1slxeaMfQAd49/aWiY/MuTzuFwolaovWiMC6vMPUM+B2HsFJsUkV8WwLttRMWKtShDgPBc5L6+Jz1J4k1rFGrHekI8DB27NYw0AOVouOVouVlCiG4zE6ezZMXp9xr5NdLkEz1ekY7eL2AfQfiGA91yIsKozzAQIASXPhrHbbbEPAGDdahsN79yry9brvUHdfj/Dw2Nq04ddUiikRf1GNpRkU1Cw2Nw5QAghWSIHRKpFizzU730y0Qzd/np0hwaHJow1Q06bWrYxX1KUpNgH8N3316TTbROGfB5eYhMbSsJBRZn9p/vzDqCx4SmpscF4OiFK+xYShVCkjgODKl7vDV22P3ZMWQuA2y3o6lPp2u/X7bNwgUCWhTUA1Oy+h1e3qYZ8ZFngcsnWAOBwSDgc1kgfcZ8EEwBmGPePjl4PxDOAziOfNdn8/onJeAVwGLAdO3ooFA6HQ/FYCLUAZe+/V1vU29vtX7v2uSnFJBsndRVrUfo2SQEOAgHMuXV2pmN8pqZCr8y4eVqPfgX6Seju+hN5o3yx1M0+FQAAAABJRU5ErkJggg==
-""".strip()
+ICON_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAEKklEQVR4AeybPXYTMRSF52MToaSl"
+    "p6BPk5KeBdBzTlaRc+hZAD0bSJ+CnpaSrML4evI8sixpJM0b2yHJ8T1Pen9691oeJ0XeDC/855wC"
+    "bLbaG7bL87zOIcCO9P39/WDYUt/5tvbkr3MIsCN+fX09GCTEyZk/HXhqATYiK+K3t7eDQXv5tzPp"
+    "JmzN6V5rCCASOdQwy9XKX1PflFMrgA6vxe6K6x2NUTNZXGP7p9raGSzvqSxvagUYvn9+VwU7Stc6"
+    "hq68fCJ1d3c3GLSX3+Jah7CetTMoz2rmbLUAanR19XaYg/IMIhTC/CIn0gbtLRbma21+2bmzFVde"
+    "C5oEaGmcyxUpQaQN2gu5mjX9XQJ8+vYw5BAOa1c8tsoRYYP2cY7tFTPkzjS/5bXYLgF0wGazGVJQ"
+    "TLDrnbI3NzdDjFSe+dRPSJ1nPsV70C1A6TC72p62dN6SmLsA9o6sYZcQzdW6C5A76FL9L06A+I1w"
+    "FwAYII348EvYuwgAE+HSZx9w4wzshF7a0EWAkHRpIOXBODgc21KtxWCsUy/B/L3WRYCWwzV0DjCS"
+    "g7y12pYzS7knF6A0jJEr2VJ9T+yiBOghsLTGVQA4vrpLB1y73k0AIPm3AYyirE2kt7+LADCSTw1h"
+    "n2cgFT67z0UAkZxjohxg990Nk03VwRSH/DpV2+pzEaD2UIkQA44Jxjm5fe25pbyTCpAaJEUulbeW"
+    "7+wCrEWstu+rALVK/a95bjcApodZSiyY4jCtU7mevrleLgLA+HuAPdCAg3PhMG55snCYGxYCR1+b"
+    "MPnC3N61iwAiEg6gPUyDah/Gw7ViMOXCtFashLBP79pFgNTh4eCpeOgLc8N1mLPWejUB1hrYu++r"
+    "AN6KzvWD6TMO03qubq24yw0AivMB+6d5+BkP10Cxx1pBFwFEBNiThMO14oYcEcWBXHjvB/bn7J0L"
+    "Fi4C6HwRyEHxGqgeJoJwvFaOoabnXI6bAHMH1caNXM7W9qnNuzgBagf3yrs4AeDw2nsRzfVxFQAO"
+    "h4f0PhwGDnPiqw+HcSAsX7x2EwDyf/CUSMWxmFEc1x78RHARAEby8fC5vUgYcjklv2pL8ZaYiwCe"
+    "A7UMn8pt9bkI0HroJeVfvADA/jc/yK97RXUTAKiaASgSSjX5/ethKEE1P79+lGmGiwAwPgSB7ADA"
+    "jrieFyXAmAdke4WB9x/6iFsPFwFEyBqmLIwCzeWpVjkGKIsg8spVnfD4+FemCS4C2IkaBti90zBZ"
+    "+S2nxZbqYvItfcNcVwHUWEPHkN8TXuQ1k7sAaromcuR7rr/mfFYC5MiLSC+ejQAiL5IwPVtgXMvf"
+    "i2chgMjrez4F/XuMcHIBYFQf1rUiJuKyIfSZF0Jfz7rrBmigU8KIibDBfEttkwB2+LnsUrKp+iYB"
+    "Ug2eu69agC8//gyXiNxMtW/MPwAAAP//EMEB7gAAAAZJREFUAwAyE5yPUtMdygAAAABJRU5ErkJg"
+    "gg=="
+)
 
 # -------- Utilities --------
 
@@ -266,7 +286,7 @@ class ClipStackApp(tk.Tk):
         self.title(APP_NAME)
 
         # Window icon. Keep a reference to avoid Tk garbage-collecting it.
-        self._window_icon = tk.PhotoImage(data=TRAY_ICON_PNG_B64)
+        self._window_icon = tk.PhotoImage(data=ICON_B64)
         self.iconphoto(True, self._window_icon)
 
         # Load persisted history and settings.
@@ -280,6 +300,8 @@ class ClipStackApp(tk.Tk):
         self.hide_after_copy = self.store.settings.get("hide_after_copy", True)
         self.auto_var = tk.BooleanVar(value=self.store.settings.get("auto_capture", True))
 
+        # Do not capture the pre-existing clipboard content at startup.
+        self._prime_clipboard()
 
         # Runtime state.
         self.poll_ms = POLL_MS_DEFAULT
@@ -287,6 +309,7 @@ class ClipStackApp(tk.Tk):
         self._has_filter = False
         self._filtered_items = []
         self._status_builder = None
+        self.closing = False
 
         # Tray state.
         self.tray_icon = None
@@ -302,12 +325,12 @@ class ClipStackApp(tk.Tk):
             # Without tray menu, closing the window must really exit.
             self.protocol("WM_DELETE_WINDOW", self.quit_app)
 
+        # UI
         self._build_ui()
         self._bind_shortcuts()
 
-        # Do not capture the pre-existing clipboard content at startup.
-        self._prime_clipboard()
-        self.after(400, self.poll_clipboard)
+        # Delay the first clipboard poll until Tk has fully initialized.
+        self.after(1000, self.poll_clipboard)
 
 
     # ----- MULTILINGUAL SUPPORT -----
@@ -443,7 +466,7 @@ class ClipStackApp(tk.Tk):
 
 
         self.tree.bind("<Double-1>", self.on_tree_double_click)
-        self.tree.bind("<Button-1>", self._disable_treeview_resize, add="+")
+        self.tree.bind("<Button-1>", self.on_tree_click, add="+")
         self.tree.bind("<Configure>", lambda e: self._fit_preview_column(), add="+")
 
         # Item menu
@@ -827,7 +850,9 @@ class ClipStackApp(tk.Tk):
         when ClipStack starts.
         """
         try:
-            self._last_clipboard = comparison_key(self.clipboard_get())
+            text = normalize_line_endings(self.clipboard_get())
+            key = comparison_key(text)
+            self._last_clipboard = key
         except tk.TclError:
             self._last_clipboard = ""
 
@@ -839,6 +864,9 @@ class ClipStackApp(tk.Tk):
 
         The polling loop reschedules itself continuously using Tk's event queue.
         """
+        if self.closing:
+            return
+
         try:
             if self.auto_var:
                 text = normalize_line_endings(self.clipboard_get())
@@ -859,17 +887,15 @@ class ClipStackApp(tk.Tk):
 
     def sync_clipboard(self):
         """Clear the system clipboard if the current clip is no longer stored."""
-
         if self._last_clipboard and not any(
             comparison_key(it.text) == self._last_clipboard
             for it in self.store.items
         ):
             try:
                 self.clipboard_clear()
+                self._last_clipboard = ""
             except tk.TclError:
                 pass
-
-            self._last_clipboard = ""
 
     # ----- ITEM ACTIONS -----
 
@@ -887,16 +913,20 @@ class ClipStackApp(tk.Tk):
         clipboard item is highlighted, reports the result in the status line and
         optionally hides the window after copying.
         """
+        old_last = self._last_clipboard
         item = self.get_selected_item()
         if not item:
             return
         try:
             self.clipboard_clear()
-            self.clipboard_append(item.text)
             self._last_clipboard = comparison_key(item.text)
+            self.clipboard_append(item.text)
+            self.update_idletasks()
+            self.update()
             self.refresh_list(select_first=False, keep_item=item)
             self.set_status_builder(lambda: self.tr("_copy_ok"))
         except tk.TclError:
+            self._last_clipboard = old_last
             self.set_status_builder(lambda: self.tr("_copy_error"))
         if self.hide_after_copy and self.tray_has_menu:
             self.hide_to_tray()
@@ -1189,10 +1219,21 @@ class ClipStackApp(tk.Tk):
         self.geometry(f"{new_w}x{cur_h}")
         self.minsize(new_w, self.winfo_reqheight())
 
-    def _disable_treeview_resize(self, event):
+    def on_tree_click(self, event):
         """Prevent manual resizing of Treeview columns."""
         region = self.tree.identify_region(event.x, event.y)
+
+        # Existing code to prevent column resizing
         if region == "separator":
+            return "break"
+
+        # Click on pin column?
+        column = self.tree.identify_column(event.x)
+        row = self.tree.identify_row(event.y)
+
+        if region == "cell" and column == "#1" and row:
+            self.tree.selection_set(row)
+            self.toggle_pin()
             return "break"
 
     def _reposition_after_show(self):
@@ -1251,7 +1292,7 @@ class ClipStackApp(tk.Tk):
         if self.tray_icon is not None:
             return
 
-        image = self._load_tray_icon_from_b64(TRAY_ICON_PNG_B64, size=64)
+        image = self._load_tray_icon_from_b64(ICON_B64, size=64)
         menu = self._build_tray_menu()
         self.tray_icon = pystray.Icon(APP_NAME, image, APP_NAME, menu)
 
@@ -1286,6 +1327,8 @@ class ClipStackApp(tk.Tk):
         The current state is saved, the tray icon is stopped if present and the
         main Tk window is destroyed.
         """
+        self.closing = True
+
         self.save_now()
 
         if self.tray_icon is not None:
@@ -1294,6 +1337,8 @@ class ClipStackApp(tk.Tk):
             except Exception:
                 pass
             self.tray_icon = None
+
+        self.update()
         self.destroy()
 
 def parse_args():

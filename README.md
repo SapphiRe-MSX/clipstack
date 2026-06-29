@@ -1,4 +1,4 @@
-# Clipstack
+# ClipStack
  
 ClipStack is a lightweight clipboard history manager focused on speed, simplicity and keyboard-driven workflows.
 
@@ -39,15 +39,15 @@ If `tkinter` is not available, install the corresponding package provided by you
 Start ClipStack from a terminal with:
 
 ```bash
-python3 clipStack.py
+python3 clipstack.py
 ```
 
 By default, ClipStack uses the system tray when it is available.
 
-The optional --no-tray parameter disables tray integration and enables the application window menu instead:
+The optional `--no-tray` parameter disables tray integration and enables the application window menu instead:
 
 ```bash
-python3 clipStack.py --no-tray
+python3 clipstack.py --no-tray
 ```
 
 Use this option on desktop environments that do not support tray menus, or if you prefer to access all commands from the application window.
@@ -73,6 +73,8 @@ The entry currently stored in the system clipboard is highlighted in green and b
 ## Clipboard entry menu
 
 Each clipboard entry provides its own context menu, available by right-clicking the item. Most actions are also available through their associated keyboard shortcuts. Double-clicking an item copies it to the system clipboard. If the **Hide when copy** option is enabled in the Configuration menu, the application window is also hidden.
+
+Clicking the **pin** column toggles the pinned state of an item without opening the context menu.
 
 ### Copy / Copy and hide *(Enter)*
   Copy the selected item to the system clipboard.
@@ -169,12 +171,13 @@ The localization system is designed to be easily extended. Contributions adding 
 
 - Only text clipboard entries are stored. Images and other clipboard formats are ignored.
 - Clipboard monitoring is limited to the local user session.
+- Clipboard contents copied from ClipStack may not persist after closing the application, depending on the desktop environment and clipboard backend.
 
 ## Acknowledgements
 
 Thanks to everyone who tested ClipStack and provided feedback, bug reports and feature suggestions.
 
-Special thanks to my daughter for creating the ClipStack application icon.
+Special thanks to my daughter, Pink Scratchy 314, for designing the ClipStack icon.
 
 ## License
 
