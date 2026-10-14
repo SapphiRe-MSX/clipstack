@@ -17,6 +17,7 @@ import json
 import os
 from PIL import Image
 import pystray
+import sys
 import time
 import threading
 import tkinter as tk
@@ -26,6 +27,7 @@ from typing import Optional
 
 # -------- Configuration --------
 APP_NAME = "ClipStack"
+APP_VERSION = "1.1.0"
 MAX_ITEMS_DEFAULT = 50
 POLL_MS_DEFAULT = 600
 SAVE_FILENAME = ".clipstack_history.json"
@@ -33,7 +35,6 @@ FILETYPES = [ ('clip files', '*.json') ]
 
 # -------- UI Columns --------
 PIN_COL_W = 26
-TS_COL_W = 120
 PREVIEW_COL_MIN_W = 120
 PREVIEW_MIN_W = 520
 
@@ -283,7 +284,7 @@ class ClipStackApp(tk.Tk):
         # Hide immediately to avoid startup flicker when launching to tray.
         self.withdraw()
 
-        self.title(APP_NAME)
+        self.title(f"{APP_NAME} v{APP_VERSION}")
 
         # Window icon. Keep a reference to avoid Tk garbage-collecting it.
         self._window_icon = tk.PhotoImage(data=ICON_B64)
@@ -298,6 +299,7 @@ class ClipStackApp(tk.Tk):
         self.corner = self.store.settings.get("corner", "top-right")
         self.show_timestamp = self.store.settings.get("show_timestamp", True)
         self.hide_after_copy = self.store.settings.get("hide_after_copy", True)
+        self.ui_scale = self.store.settings.get("ui_scale", 1.0)
         self.auto_var = tk.BooleanVar(value=self.store.settings.get("auto_capture", True))
 
         # Do not capture the pre-existing clipboard content at startup.
@@ -326,6 +328,7 @@ class ClipStackApp(tk.Tk):
             self.protocol("WM_DELETE_WINDOW", self.quit_app)
 
         # UI
+        self._apply_ui_scale()
         self._build_ui()
         self._bind_shortcuts()
 
@@ -396,6 +399,62 @@ class ClipStackApp(tk.Tk):
 
     # ----- USER INTERFACE -----
 
+    def _scale(self, value):
+        """Scale a pixel-based UI dimension according to the configured UI scale."""
+        return round(value * self.ui_scale)
+
+    def _timestamp_column_width(self):
+        """Calculate the timestamp column width using the bold font.
+
+        The bold font ensures that timestamps fit even when the current
+        clipboard entry is highlighted. An additional margin is included.
+        """
+        font = tkfont.nametofont("TkDefaultFont").copy()
+        font.configure(weight="bold")
+        return font.measure("0000/00/00-00:00") + self._scale(8)
+
+    def _apply_ui_scale(self):
+        """Apply the configured UI scale to fonts and ttk widget styles.
+
+        Original font sizes are preserved to prevent cumulative scaling.
+        Treeview row height and Spinbox arrow size are scaled separately.
+        """
+        font_names = (
+            "TkDefaultFont",
+            "TkTextFont",
+            "TkFixedFont",
+            "TkMenuFont",
+            "TkHeadingFont",
+            "TkCaptionFont",
+            "TkSmallCaptionFont",
+            "TkIconFont",
+            "TkTooltipFont",
+        )
+
+        if not hasattr(self, "_base_font_sizes"):
+            self._base_font_sizes = {}
+
+        for name in font_names:
+            font = tkfont.nametofont(name)
+
+            if name not in self._base_font_sizes:
+                self._base_font_sizes[name] = font.cget("size")
+
+            font.configure(
+                size=round(self._base_font_sizes[name] * self.ui_scale)
+            )
+
+        style = ttk.Style(self)
+        style.configure(
+            "Treeview",
+            rowheight=self._scale(20)
+        )
+
+        style.configure(
+            "TSpinbox",
+            arrowsize=self._scale(14)
+        )
+
     def _build_ui(self):
         """Create and layout the main application widgets.
 
@@ -407,7 +466,11 @@ class ClipStackApp(tk.Tk):
         Widget callbacks and keyboard shortcuts are configured separately.
         """
         # Top bar
-        top = ttk.Frame(self, padding=(10, 10, 10, 6))
+        top = ttk.Frame(
+            self,
+            padding=(self._scale(10), self._scale(10),
+                     self._scale(10), self._scale(6))
+        )
         top.pack(fill="x")
 
         if not self.tray_has_menu:
@@ -417,14 +480,17 @@ class ClipStackApp(tk.Tk):
                 width=2,
                 command=self._build_window_menu
             )
-            self.btn_app_menu.pack(side="left", padx=(0, 8))
+            self.btn_app_menu.pack(side="left", padx=(0, self._scale(8)))
 
         self.lbl_filter = ttk.Label(top, text=self.tr("_filter"))
         self.lbl_filter.pack(side="left")
 
         self.search_var = tk.StringVar()
         self.search_entry = ttk.Entry(top, textvariable=self.search_var, width=40)
-        self.search_entry.pack(side="left", padx=(6, 10))
+        self.search_entry.pack(
+            side="left",
+            padx=(self._scale(6), self._scale(10))
+        )
         self.search_var.trace_add("write", lambda *_: self.on_search_changed())
 
         self.lbl_max_items = ttk.Label(top, text=self.tr("_maxitms"))
@@ -432,10 +498,16 @@ class ClipStackApp(tk.Tk):
 
         self.max_var = tk.IntVar(value=self.store.max_items)
         self.max_spin = ttk.Spinbox(top, from_=10, to=500, textvariable=self.max_var, width=6, command=self.on_change_max)
-        self.max_spin.pack(side="left", padx=(6, 12))
+        self.max_spin.pack(
+            side="left",
+            padx=(self._scale(6), self._scale(12))
+        )
 
         # Main area: list
-        main = ttk.Frame(self, padding=(10, 0, 10, 10))
+        main = ttk.Frame(
+            self,
+            padding=(self._scale(10), 0, self._scale(10), self._scale(10))
+        )
         main.pack(fill="both", expand=True)
 
         left = ttk.Frame(main)
@@ -452,9 +524,9 @@ class ClipStackApp(tk.Tk):
         self.tree.heading("ts", text=self.tr("_time"))
         self.tree.heading("preview", text=self.tr("_content"))
 
-        self.tree.column("pin", width=PIN_COL_W, anchor="center", stretch=False)
-        self.tree.column("ts", width=TS_COL_W, anchor="center", stretch=False)
-        self.tree.column("preview", width=PREVIEW_MIN_W, anchor="w", stretch=True)
+        self.tree.column("pin", width=self._scale(PIN_COL_W), anchor="center", stretch=False)
+        self.tree.column("ts", width=self._timestamp_column_width(), anchor="center", stretch=False)
+        self.tree.column("preview", width=self._scale(PREVIEW_MIN_W), anchor="w", stretch=True)
 
         self.apply_treeview_columns()
 
@@ -471,13 +543,17 @@ class ClipStackApp(tk.Tk):
 
         # Item menu
 
-        self.ctx_copy_index = 0
-        self.ctx_pin_index = 1
-        self.ctx_edit_index = 2
-        self.ctx_delete_index = 4
+        idx = 0
+        self.ctx_copy_index = idx; idx += 1
+        self.ctx_pin_index = idx; idx += 1
+        self.ctx_promote_top_index = idx; idx += 1
+        self.ctx_edit_index = idx; idx += 1
+        idx += 1
+        self.ctx_delete_index = idx; idx += 1
         self.ctx_menu = tk.Menu(self, tearoff=0)
         self.ctx_menu.add_command(label="", command=self.copy_selected)
         self.ctx_menu.add_command(label="", command=self.toggle_pin)
+        self.ctx_menu.add_command(label=self.tr("_promote_top"), command=self.promote_selected)
         self.ctx_menu.add_command(label=self.tr("_edit"), command=self.edit_selected)
         self.ctx_menu.add_separator()
         self.ctx_menu.add_command(label=self.tr("_delete"), command=self.delete_selected)
@@ -486,7 +562,11 @@ class ClipStackApp(tk.Tk):
         self.tree.bind("<Control-Button-1>", self._show_item_menu)  # macOS
 
         self.status = tk.StringVar(value="")
-        ttk.Label(self, textvariable=self.status, padding=(10, 0, 10, 8)).pack(fill="x")
+        ttk.Label(
+            self,
+            textvariable=self.status,
+            padding=(self._scale(10), 0, self._scale(10), self._scale(8))
+        ).pack(fill="x")
         self.status_default()
 
         self.refresh_list(select_first=True)
@@ -534,6 +614,7 @@ class ClipStackApp(tk.Tk):
         self.bind("<Control-Shift-U>", _shortcut(self.clear_unpinned))
         self.bind("<Control-Shift-u>", _shortcut(self.clear_unpinned))
         self.bind("<F2>", _shortcut(self.toggle_pin))
+        self.bind("<Control-Home>", _shortcut(self.promote_selected))
 
         if self.tray_has_menu:
             self.bind("<Escape>", _shortcut(self.hide_to_tray))
@@ -596,6 +677,7 @@ class ClipStackApp(tk.Tk):
         """Build the Config submenu for tray or window menu."""
         if tray:
             position_menu = self._build_position_menu()
+            scale_menu = self._build_scale_menu()
             language_menu = self._build_language_menu()
 
             return pystray.Menu(
@@ -604,6 +686,7 @@ class ClipStackApp(tk.Tk):
                 pystray.MenuItem(f"{self.tr('_hide_when_copy')} (F6)", self._tray_call(self.toggle_hide_after_copy), checked=lambda item: self.hide_after_copy),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(self.tr("_window_pos"), position_menu),
+                pystray.MenuItem(self.tr("_ui_scale"), scale_menu),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem(self.tr("_language"), language_menu),
             )
@@ -619,6 +702,7 @@ class ClipStackApp(tk.Tk):
 
         menu.add_separator()
         self._add_tk_submenu(menu,self.tr("_window_pos"),self._build_position_menu)
+        self._add_tk_submenu(menu, self.tr("_ui_scale"), self._build_scale_menu)
 
         menu.add_separator()
         self._add_tk_submenu(menu,self.tr("_language"),self._build_language_menu)
@@ -649,6 +733,38 @@ class ClipStackApp(tk.Tk):
                     label=label,
                     command=lambda pos=pos: self.set_corner(pos)
                 )
+
+    def _build_scale_menu(self, menu=None, tray: bool = True):
+        """Build the UI Scale submenu for tray or window menu."""
+        scales = (1.0, 1.25, 1.5, 1.75, 2.0)
+
+        if tray:
+            return pystray.Menu(
+                *[
+                    pystray.MenuItem(
+                        f"{round(scale * 100)}%",
+                        self._tray_call(self.set_ui_scale, scale),
+                        checked=self._checked_equals(
+                            lambda scale=scale: self.ui_scale,
+                            scale
+                        ),
+                    )
+                    for scale in scales
+                ]
+            )
+
+        if menu is None:
+            raise ValueError("menu is required when tray=False")
+
+        for scale in scales:
+            label = (
+                self.menu_checked(self.ui_scale == scale)
+                + f"{round(scale * 100)}%"
+            )
+            menu.add_command(
+                label=label,
+                command=lambda scale=scale: self.set_ui_scale(scale)
+            )
 
     def _build_language_menu(self,menu = None, tray: bool = True):
         """Build the Language submenu for tray or window menu."""
@@ -741,6 +857,7 @@ class ClipStackApp(tk.Tk):
 
         self.ctx_menu.entryconfigure(self.ctx_copy_index, label=copy_label)
         self.ctx_menu.entryconfigure(self.ctx_pin_index, label=pin_label)
+        self.ctx_menu.entryconfigure(self.ctx_promote_top_index, label=f"{self.tr('_promote_top')} (Ctrl+Home)")
         self.ctx_menu.entryconfigure(self.ctx_edit_index, label=f"{self.tr('_edit')} (Ctrl+E)")
         self.ctx_menu.entryconfigure(self.ctx_delete_index, label=f"{self.tr('_delete')} (Supr)")
 
@@ -944,6 +1061,21 @@ class ClipStackApp(tk.Tk):
         self.refresh_list(select_first=False, keep_item=item)
         self.save_now()
 
+    def promote_selected(self):
+        """Move the selected item to the top of the clipboard history."""
+        item = self.get_selected_item()
+        if item is None:
+            return
+
+        try:
+            self.store.items.remove(item)
+        except ValueError:
+            return
+
+        self.store.items.insert(0, item)
+        self.refresh_list(select_first=False, keep_item=item)
+        self.save_now()
+
     def edit_selected(self):
         """Open a modal editor for the selected clipboard item."""
         it = self.get_selected_item()
@@ -956,11 +1088,11 @@ class ClipStackApp(tk.Tk):
         win.grab_set()
 
         txt = tk.Text(win, wrap="word", width=80, height=20)
-        txt.pack(fill="both", expand=True, padx=10, pady=10)
+        txt.pack(fill="both", expand=True, padx=self._scale(10), pady=self._scale(10))
         txt.insert("1.0", it.text)
 
         btns = ttk.Frame(win)
-        btns.pack(fill="x", padx=10, pady=(0, 10))
+        btns.pack(fill="x", padx=self._scale(10), pady=(0, self._scale(10)))
 
         def save_edit():
             new_text = txt.get("1.0", "end-1c")
@@ -969,8 +1101,9 @@ class ClipStackApp(tk.Tk):
                 win.destroy()
                 return
 
-            it.text = new_text
-            it.ts = time.time()
+            # Preserve the pin state before removing the original item.
+            was_pinned = it.pinned
+
             # Remove the old item, then add the edited text through the store so
             # MRU promotion and de-duplication stay consistent.
             real_idx = self.store.items.index(it)
@@ -978,12 +1111,13 @@ class ClipStackApp(tk.Tk):
             self.store.add(new_text)
 
             edited_item = self.store.items[0]
+            edited_item.pinned = edited_item.pinned or was_pinned
             self.refresh_list(select_first=False, keep_item=edited_item)
             self.save_now()
             win.destroy()
 
         ttk.Button(btns, text=self.tr("_save"), command=save_edit).pack(side="right")
-        ttk.Button(btns, text=self.tr("_cancel"), command=win.destroy).pack(side="right", padx=(0, 8))
+        ttk.Button(btns, text=self.tr("_cancel"), command=win.destroy).pack(side="right", padx=(0, self._scale(8)))
 
         win.bind("<Escape>", lambda e: (win.destroy(), "break"))
         win.bind("<Control-Return>", lambda e: (save_edit(), "break"))
@@ -1103,6 +1237,14 @@ class ClipStackApp(tk.Tk):
         self.move_to_corner()
         self.save_now()
 
+    def set_ui_scale(self, scale: float):
+        """Set the UI scale and restart ClipStack."""
+        if scale == self.ui_scale:
+            return
+
+        self.ui_scale = scale
+        self.restart_app()
+
     def save_now(self):
         """Save clipboard history and user preferences to disk."""
         try:
@@ -1112,7 +1254,8 @@ class ClipStackApp(tk.Tk):
                     "language": self.language,
                     "corner": self.corner,
                     "show_timestamp": self.show_timestamp,
-                    "hide_after_copy": self.hide_after_copy
+                    "hide_after_copy": self.hide_after_copy,
+                    "ui_scale": self.ui_scale
                 }
             )
         except Exception as exc:
@@ -1179,9 +1322,9 @@ class ClipStackApp(tk.Tk):
         ts_w = int(self.tree.column("ts", "width")) if ts_visible else 0
 
         # Small safety margin to avoid clipping and geometry rounding issues.
-        margin = 12
+        margin = self._scale(12)
 
-        new_w = max(PREVIEW_COL_MIN_W, container_w - vsb_w - pin_w - ts_w - margin)
+        new_w = max(self._scale(PREVIEW_COL_MIN_W), container_w - vsb_w - pin_w - ts_w - margin)
         self.tree.column("preview", width=new_w)
 
     def apply_treeview_columns(self):
@@ -1206,14 +1349,14 @@ class ClipStackApp(tk.Tk):
         """
         self.update_idletasks()
 
-        fixed_w = PIN_COL_W
+        fixed_w = self._scale(PIN_COL_W)
         if self.show_timestamp:
-            fixed_w += TS_COL_W
+            fixed_w += self._timestamp_column_width()
 
         # Approximate space for scrollbar, borders and internal padding.
-        chrome_w = 40
+        chrome_w = self._scale(40)
 
-        new_w = fixed_w + PREVIEW_MIN_W + chrome_w
+        new_w = fixed_w + self._scale(PREVIEW_MIN_W) + chrome_w
         cur_h = self.winfo_height()
 
         self.geometry(f"{new_w}x{cur_h}")
@@ -1319,16 +1462,11 @@ class ClipStackApp(tk.Tk):
         except Exception:
             pass
 
-    # ----- QUIT THE APP -----
+    # ----- RESTART/QUIT THE APP -----
 
-    def quit_app(self):
-        """Perform a clean application shutdown.
-
-        The current state is saved, the tray icon is stopped if present and the
-        main Tk window is destroyed.
-        """
+    def prepare_shutdown(self):
+        """Save the current state and stop the tray icon before exiting or restarting."""
         self.closing = True
-
         self.save_now()
 
         if self.tray_icon is not None:
@@ -1339,6 +1477,15 @@ class ClipStackApp(tk.Tk):
             self.tray_icon = None
 
         self.update()
+
+    def restart_app(self):
+        """Restart ClipStack in the current process, preserving command-line arguments."""
+        self.prepare_shutdown()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    def quit_app(self):
+        """Shut down ClipStack cleanly and destroy the main Tk window."""
+        self.prepare_shutdown()
         self.destroy()
 
 def parse_args():

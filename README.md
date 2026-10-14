@@ -11,12 +11,23 @@ ClipStack is designed to stay out of the way: it can run from the system tray wh
 - Clipboard history.
 - Filter as you type.
 - Pin frequently used entries.
+- Manually promote entries to the top of the history.
 - Edit stored clips.
 - Import and export clipboard history.
 - Automatic persistence.
 - System tray integration.
 - Window menu fallback for desktops without tray support.
+- Adjustable UI scale (100%–200%).
 - Multilingual interface.
+
+## Compatibility
+
+| Platform | Status | Notes |
+|----------|:------:|-------|
+| Linux (X11) | ✅ | Fully supported, including system tray integration. |
+| Linux (Wayland) | ⚠️ | Works, but clipboard behavior may vary depending on the desktop environment. |
+| Windows | ✅ | Fully functional with `--no-tray`. |
+| macOS | ❓ | Not tested. |
 
 ## Screenshot
 
@@ -36,7 +47,13 @@ The required Python packages can be installed with:
 pip install pystray pillow
 ```
 
-If `tkinter` is not available, install the corresponding package provided by your operating system.
+On Debian/Ubuntu-based Linux distributions, install tkinter with:
+
+```bash
+sudo apt install python3-tk
+```
+
+On other operating systems, install tkinter using the appropriate Python distribution or system package manager.
 
 ## Launching the application
 
@@ -86,8 +103,11 @@ Clicking the **pin** column toggles the pinned state of an item without opening 
 ### Pin / Unpin *(F2)*  
   Pin or unpin the selected item.
 
+### Promote to top *(Ctrl+Home)*
+  Move the selected item to the top of the clipboard history.
+
 ### Edit *(Ctrl+E)*  
-  Edit the selected item text.
+  Edit the selected item text. The pin state is preserved when editing.
 
 ### Delete *(Del)*  
   Remove the selected item.
@@ -141,6 +161,9 @@ The remaining menu entries are available from both the system tray menu and the 
 - **Window position**  
   Select the screen corner where the window is displayed.
 
+- **UI scale**  
+  Adjust the interface scale (100%, 125%, 150%, 175% or 200%). ClipStack automatically restarts to apply the new scale.
+
 - **Language**  
   Select the application language.
 
@@ -153,8 +176,9 @@ Exit the application.
 | Shortcut | Action |
 |----------|--------|
 | Enter | Copy the selected item |
-| Ctrl+E | Edit the selected item |
 | F2 | Pin / Unpin the selected item |
+| Ctrl+Home | Move the selected item to the top |
+| Ctrl+E | Edit the selected item |
 | Del | Delete the selected item |
 | Esc | Hide the window *(tray mode only)* |
 | Ctrl+L | Import clipboard history |
