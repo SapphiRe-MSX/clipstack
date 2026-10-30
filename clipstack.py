@@ -23,11 +23,12 @@ import threading
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import filedialog, messagebox, ttk
-from typing import Optional
+from typing import List, Optional
+import urllib.request
 
 # -------- Configuration --------
 APP_NAME = "ClipStack"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.3.0"
 MAX_ITEMS_DEFAULT = 50
 POLL_MS_DEFAULT = 600
 SAVE_FILENAME = ".clipstack_history.json"
@@ -63,9 +64,14 @@ ICON_B64 = (
     "gg=="
 )
 
+ICON_IMAGE = Image.open(
+    io.BytesIO(base64.b64decode(ICON_B64))
+).convert("RGBA")
+
 # -------- Utilities --------
 
 def get_save_path() -> str:
+    """Return the path to the ClipStack save file in the user's home directory."""
     home = os.path.expanduser("~")
     return os.path.join(home, SAVE_FILENAME)
 
@@ -73,7 +79,7 @@ def comparison_key(text: str) -> str:
     """Return a normalized key for comparisons and searches."""
     return normalize_line_endings(text).strip()
 
-def is_blank(text: str) -> str:
+def is_blank(text: str) -> bool:
     """Return True if the text contains only whitespace."""
     return not text.strip()
 
@@ -90,32 +96,34 @@ class ClipItem:
 
     Attributes:
         text: Clipboard text (raw, may contain newlines).
-        ts: Unix timestamp (float) of last capture/promote (used for display/aging).
+        ts: Unix timestamp (float) of the last insertion, editing or recapture.
         pinned: If True, item is protected from bulk cleanup and (optionally) limits.
     """
 
-    __slots__ = ("text", "ts", "pinned")
+    __slots__ = ("text", "ts", "pinned", "use_count")
 
-    def __init__(self, text: str, ts: Optional[float] = None, pinned: bool = False):
+    def __init__(self, text: str, ts: Optional[float] = None, pinned: bool = False, use_count: int = 0):
         """Create a new clipboard item.
 
         Args:
             text: Clipboard text.
             ts: Optional timestamp. If None, current time is used.
             pinned: Whether the item is pinned.
+            use_count: Number of times the item has been copied from ClipStack.
         """
         self.text = text
         self.ts = ts if ts is not None else time.time()
         self.pinned = pinned
+        self.use_count = use_count
 
     def to_dict(self):
         """Serialize the item to a JSON-compatible dictionary."""
-        return {"text": self.text, "ts": self.ts, "pinned": self.pinned}
+        return {"text": self.text, "ts": self.ts, "pinned": self.pinned,"use_count": self.use_count}
 
     @staticmethod
     def from_dict(d):
         """Create a ClipItem from a dictionary (loaded from JSON)."""
-        return ClipItem(d.get("text", ""), d.get("ts", time.time()), bool(d.get("pinned", False)))
+        return ClipItem(d.get("text", ""), d.get("ts", time.time()), bool(d.get("pinned", False)),d.get("use_count", 0))
 
 ######################
 # HistoryStore Class #
@@ -125,7 +133,7 @@ class HistoryStore:
     """In-memory clipboard history + JSON persistence.
 
     Responsibilities:
-        - Maintain items as MRU (most-recent-first).
+        - Maintain items in MRC (most-recently-copied) order.
         - De-duplicate: re-copying an existing text promotes it instead of duplicating.
         - Enforce max_items (typically for non-pinned items).
         - Load/save JSON (history + settings).
@@ -142,19 +150,23 @@ class HistoryStore:
         """
         self.max_items = max_items
         self.items: list[ClipItem] = []
+        self.settings = {}
 
-    def add(self, text: str) -> bool:
-        """Add text to history using MRU + de-duplication.
+    def add(self, text: str, sort_mode: str = "mrc") -> bool:
+        """Add text to the history using MRC ordering and deduplication.
 
-        If the normalized text already exists, the existing item is promoted to the
-        top of the list and its timestamp is updated. Otherwise, a new ClipItem is
-        inserted at the top. Empty/whitespace-only text is ignored.
+        If the normalized text already exists, moves the existing item to
+        the top and updates its timestamp, preserving its pinned state and
+        usage counter. Otherwise, inserts a new item at the top.
+
+        Empty or whitespace-only text is ignored. Usage counters are not
+        incremented by clipboard captures.
 
         Args:
             text: Clipboard text to add.
 
         Returns:
-            True if a new item was inserted or an existing item was promoted.
+            True if an item was inserted or promoted.
             False if the input is empty after normalization.
         """
         key = comparison_key(text)
@@ -169,13 +181,55 @@ class HistoryStore:
                 return True
 
         self.items.insert(0, ClipItem(text))
-        self._enforce_limit()
+        self._enforce_limit(sort_mode)
         return True
+
+    def get_sorted_items(self, sort_mode: str):
+        """Return history items sorted by the selected mode."""
+        items = list(self.items)
+
+        if sort_mode == "mfu":
+            items.sort(key=lambda it: it.use_count, reverse=True)
+
+        return items
 
     def toggle_pin(self, idx: int):
         """Toggle the pinned flag for the item at index `idx` (if valid)."""
         if 0 <= idx < len(self.items):
             self.items[idx].pinned = not self.items[idx].pinned
+
+    def edit(self, item: ClipItem, new_text: str) -> ClipItem:
+        """Edit an item, promoting it to the top without enforcing the limit.
+
+        Preserve its pinned state and usage counter. If the new text
+        matches another item, merge their attributes and usage counters.
+        """
+        key = comparison_key(new_text)
+
+        if not key or item not in self.items:
+            return item
+
+        self.items.remove(item)
+
+        # Look for an existing item with the edited text.
+        existing = next(
+            (it for it in self.items if comparison_key(it.text) == key),
+            None
+        )
+
+        if existing is not None:
+            self.items.remove(existing)
+            existing.pinned = existing.pinned or item.pinned
+            existing.use_count += item.use_count
+            result = existing
+        else:
+            item.text = new_text
+            result = item
+
+        result.ts = time.time()
+        self.items.insert(0, result)
+
+        return result
 
     def delete(self, idx: int):
         """Delete the item at index `idx` (if valid)."""
@@ -202,30 +256,30 @@ class HistoryStore:
             if query in it.text.lower()
         ]
 
-    def _enforce_limit(self):
-        """Enforce `max_items` while preserving pinned items (if any).
+    def _enforce_limit(self, sort_mode: str = "mrc"):
+        """Enforce the history limit using the active sorting mode.
 
-        Policy:
-            - If there are pinned items, keep all pinned items and fill remaining
-              slots with most recent unpinned items.
-            - If no pinned items exist, truncate to `max_items`.
+        Remove the last unpinned items in the sorted history.
+        Pinned items are always preserved.
         """
-        if len(self.items) <= self.max_items:
+        overflow = len(self.items) - self.max_items
+        if overflow <= 0:
             return
-        # Respect pinned items: first try trimming from the end removing unpinned.
-        if any(it.pinned for it in self.items):
-            kept = []
-            pinned = [it for it in self.items if it.pinned]
-            unpinned = [it for it in self.items if not it.pinned]
 
-            kept = pinned[:]
-            room = max(self.max_items - len(kept), 0)
-            kept += unpinned[:room]
-            # Rebuild preserving the original MRU order in self.items.
-            kept_set = set(id(x) for x in kept)
-            self.items = [it for it in self.items if id(it) in kept_set]
-        else:
-            self.items = self.items[: self.max_items]
+        sorted_items = self.get_sorted_items(sort_mode)
+        to_remove = set()
+
+        for item in reversed(sorted_items):
+            if not item.pinned:
+                to_remove.add(id(item))
+
+                if len(to_remove) == overflow:
+                    break
+
+        self.items = [
+            item for item in self.items
+            if id(item) not in to_remove
+        ]
 
     def save(self, path: str, settings: Optional[dict] = None):
         """Save history (and optional settings) to a JSON file."""
@@ -239,46 +293,50 @@ class HistoryStore:
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-    def load(self, path: str):
+    def load(self, path: str) -> bool:
         """Load history (and settings) from a JSON file.
 
-        If the file does not exist or is invalid/corrupted, the store is reset to
-        an empty state (no exception is raised).
+        The current state is replaced only if the file is loaded successfully.
+        Returns True on success and False if the file does not exist or is invalid.
         """
         if not os.path.exists(path):
-            self.settings = {}
-            return
+            return False
 
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            self.max_items = data.get("max_items", self.max_items)
-            self.items = [ClipItem.from_dict(x) for x in data.get("items", [])]
-            self.settings = data.get("settings", {})
+
+            max_items = data.get("max_items", self.max_items)
+            items = [ClipItem.from_dict(x) for x in data.get("items", [])]
+            settings = data.get("settings", {})
         except Exception:
-            # If the file is corrupt, don't break the app; start empty.
-            self.items = []
+            return False
+
+        self.max_items = max_items
+        self.items = items
+        self.settings = settings
+        return True
 
 ######################
 # ClipStackApp Class #
 ######################
 
 class ClipStackApp(tk.Tk):
-    """Tkinter application: UI + tray integration + clipboard polling.
+    """Tkinter application: UI, clipboard monitoring and tray integration.
 
     Responsibilities:
-        - Render the Treeview list and item menu actions (copy/pin/edit/delete).
-        - Poll the system clipboard (optional) and push changes into HistoryStore.
-        - Run a system tray icon (pystray) and forward tray actions to the Tk thread.
+        - Render and manage the clipboard history with MRC/MFU sorting.
+        - Track item reuse and support copy, pin, edit and delete operations.
+        - Poll the system clipboard and capture textual changes.
+        - Run a system tray icon and forward its actions to the Tk thread.
 
     Threading model:
         - Tk must be accessed from the Tk main thread.
-        - Tray callbacks must use `after(0, ...)` to run on the Tk thread.
+        - Tray callbacks must be forwarded to the Tk event loop.
     """
 
     def __init__(self, no_tray: bool = False):
         """Initialize the application, load settings, build UI and start services."""
-
         super().__init__()
 
         # Hide immediately to avoid startup flicker when launching to tray.
@@ -297,20 +355,22 @@ class ClipStackApp(tk.Tk):
 
         self.language = self.store.settings.get("language", "es")
         self.corner = self.store.settings.get("corner", "top-right")
+        self.sort_mode = self.store.settings.get("sort_mode", "mrc")
         self.show_timestamp = self.store.settings.get("show_timestamp", True)
         self.hide_after_copy = self.store.settings.get("hide_after_copy", True)
         self.ui_scale = self.store.settings.get("ui_scale", 1.0)
-        self.auto_var = tk.BooleanVar(value=self.store.settings.get("auto_capture", True))
+        self.auto_var = True
 
         # Do not capture the pre-existing clipboard content at startup.
         self._prime_clipboard()
 
         # Runtime state.
         self.poll_ms = POLL_MS_DEFAULT
-        self._last_clipboard = None
+        self._last_double_click = 0.0
         self._has_filter = False
         self._filtered_items = []
         self._status_builder = None
+        self.modal_window = None
         self.closing = False
 
         # Tray state.
@@ -363,20 +423,53 @@ class ClipStackApp(tk.Tk):
         self.lbl_max_items.configure(text=self.tr("_maxitms"))
 
         self.tree.heading("pin", text="★")
+        self.tree.heading("uses", text=self.tr("_uses"))
         self.tree.heading("ts", text=self.tr("_time"))
         self.tree.heading("preview", text=self.tr("_content"))
 
+        self.tree.column("uses", width=self._uses_column_width())
+        self.tree.column("ts", width=self._timestamp_column_width())
+
+        self.after(0, self.resize_to_columns)
+        self.after(0, self.move_to_corner)
+
         self.refresh_status()
+
+    # ----- SORTING MODE -----
+
+    def toggle_sort_mode(self):
+        """Toggle between MRC and MFU sorting modes."""
+        self.set_sort_mode("mrc" if self.sort_mode == "mfu" else "mfu")
+
+    def set_sort_mode(self, mode: str):
+        """Set and persist the active history sorting mode.
+
+        Updates the displayed order, adjusts column visibility and refreshes
+        the tray menu. The stored history order remains unchanged.
+
+        Args:
+            mode: Sorting mode, either "mrc" or "mfu".
+        """
+        if mode not in ("mrc", "mfu"):
+            return
+
+        self.sort_mode = mode
+        self.refresh_list()
+        self.apply_treeview_columns()
+        self.save_now()
+        self.refresh_tray_menu()
 
     # ----- STATUS LINE -----
 
     def status_default(self):
-        """Set the status line to the default history/filter counter."""
+        """Set the default status line with history counts and sorting mode."""
         def builder() -> str:
             status = f"{self.tr('_history')}: {len(self.store.items)}"
 
             if not is_blank(self.search_var.get()):
                 status += f" ({self.tr('_showing')} {len(self._filtered_items)})"
+
+            status += f" — {self.tr('_' + self.sort_mode)}"
 
             return status
 
@@ -403,15 +496,35 @@ class ClipStackApp(tk.Tk):
         """Scale a pixel-based UI dimension according to the configured UI scale."""
         return round(value * self.ui_scale)
 
-    def _timestamp_column_width(self):
-        """Calculate the timestamp column width using the bold font.
+    def _uses_column_width(self):
+        """Calculate the usage column width based on its heading and counter.
 
-        The bold font ensures that timestamps fit even when the current
-        clipboard entry is highlighted. An additional margin is included.
+        The heading uses TkHeadingFont, while the counter is measured in bold.
+        Additional padding is scaled according to the UI scale.
         """
+        font = tkfont.nametofont("TkHeadingFont")
+        heading_width = font.measure(self.tr("_uses"))
+
         font = tkfont.nametofont("TkDefaultFont").copy()
         font.configure(weight="bold")
-        return font.measure("0000/00/00-00:00") + self._scale(8)
+        counter_width = font.measure("00000")
+
+        return max(heading_width, counter_width) + self._scale(24)
+
+    def _timestamp_column_width(self):
+        """Calculate the timestamp column width based on its heading and content.
+
+        The heading uses TkHeadingFont, while timestamps are measured in bold.
+        Additional padding is scaled according to the UI scale.
+        """
+        heading_font = tkfont.nametofont("TkHeadingFont")
+        heading_width = heading_font.measure(self.tr("_time"))
+
+        font = tkfont.nametofont("TkDefaultFont").copy()
+        font.configure(weight="bold")
+        content_width = font.measure("0000/00/00-00:00")
+
+        return max(content_width, heading_width) + self._scale(8)
 
     def _apply_ui_scale(self):
         """Apply the configured UI scale to fonts and ttk widget styles.
@@ -460,8 +573,8 @@ class ClipStackApp(tk.Tk):
 
         The UI consists of:
             - A filter bar.
-            - Clipboard history Treeview.
-            - Status line.
+            - A clipboard history Treeview with configurable columns.
+            - A status line showing history counts and sorting mode.
 
         Widget callbacks and keyboard shortcuts are configured separately.
         """
@@ -487,10 +600,7 @@ class ClipStackApp(tk.Tk):
 
         self.search_var = tk.StringVar()
         self.search_entry = ttk.Entry(top, textvariable=self.search_var, width=40)
-        self.search_entry.pack(
-            side="left",
-            padx=(self._scale(6), self._scale(10))
-        )
+        self.search_entry.pack(side="left", padx=(self._scale(6), self._scale(10)))
         self.search_var.trace_add("write", lambda *_: self.on_search_changed())
 
         self.lbl_max_items = ttk.Label(top, text=self.tr("_maxitms"))
@@ -498,10 +608,9 @@ class ClipStackApp(tk.Tk):
 
         self.max_var = tk.IntVar(value=self.store.max_items)
         self.max_spin = ttk.Spinbox(top, from_=10, to=500, textvariable=self.max_var, width=6, command=self.on_change_max)
-        self.max_spin.pack(
-            side="left",
-            padx=(self._scale(6), self._scale(12))
-        )
+        self.max_spin.pack(side="left", padx=(self._scale(6), self._scale(12)))
+        self.max_spin.bind("<Return>", self.on_max_enter)
+        self.max_spin.bind("<KP_Enter>", self.on_max_enter)
 
         # Main area: list
         main = ttk.Frame(
@@ -513,18 +622,21 @@ class ClipStackApp(tk.Tk):
         left = ttk.Frame(main)
         left.pack(side="left", fill="both", expand=True)
 
-        cols = ("pin", "ts", "preview")
+        cols = ("pin", "uses", "ts", "preview")
         self.tree = ttk.Treeview(left, columns=cols, show="headings", selectmode="browse")
 
         bold_font = tkfont.nametofont("TkDefaultFont").copy()
         bold_font.configure(weight="bold")
         self.tree.tag_configure("current_clipboard", foreground="green", font=bold_font)
+        self.tree.tag_configure("msx_clipboard", foreground="white", background="#2020FF", font=bold_font)
 
         self.tree.heading("pin", text="★")
+        self.tree.heading("uses", text=self.tr("_uses"))
         self.tree.heading("ts", text=self.tr("_time"))
         self.tree.heading("preview", text=self.tr("_content"))
 
         self.tree.column("pin", width=self._scale(PIN_COL_W), anchor="center", stretch=False)
+        self.tree.column("uses", width=self._uses_column_width(), anchor="e", stretch=False)
         self.tree.column("ts", width=self._timestamp_column_width(), anchor="center", stretch=False)
         self.tree.column("preview", width=self._scale(PREVIEW_MIN_W), anchor="w", stretch=True)
 
@@ -583,7 +695,8 @@ class ClipStackApp(tk.Tk):
         """Register application keyboard shortcuts and window bindings."""
         def _shortcut(action):
             def handler(event):
-                action()
+                if self.modal_window is None:
+                    action()
                 return "break"
             return handler
 
@@ -597,12 +710,18 @@ class ClipStackApp(tk.Tk):
         self.bind("<Return>", _shortcut(self.copy_selected))
         self.bind("<KP_Enter>", _shortcut(self.copy_selected))
         self.bind("<Delete>", _shortcut(self.delete_selected))
+        self.bind("<F2>", _shortcut(self.toggle_pin))
+        self.bind("<Control-Home>", _shortcut(self.promote_selected))
         self.bind("<Control-E>", _shortcut(self.edit_selected))
         self.bind("<Control-e>", _shortcut(self.edit_selected))
         self.bind("<Control-F>", _ctrl_f)
         self.bind("<Control-f>", _ctrl_f)
         self.bind("<Control-L>", _shortcut(self.import_clips))
         self.bind("<Control-l>", _shortcut(self.import_clips))
+        self.bind("<Control-M>", _shortcut(self.toggle_sort_mode))
+        self.bind("<Control-m>", _shortcut(self.toggle_sort_mode))
+        self.bind("<Control-R>", _shortcut(self.force_capture))
+        self.bind("<Control-r>", _shortcut(self.force_capture))
         self.bind("<Control-S>", _shortcut(self.export_clips))
         self.bind("<Control-s>", _shortcut(self.export_clips))
         self.bind("<Control-T>", _shortcut(self.toggle_timestamp))
@@ -613,8 +732,6 @@ class ClipStackApp(tk.Tk):
         self.bind("<Control-Shift-n>", _shortcut(self.clear_not_matching_filter))
         self.bind("<Control-Shift-U>", _shortcut(self.clear_unpinned))
         self.bind("<Control-Shift-u>", _shortcut(self.clear_unpinned))
-        self.bind("<F2>", _shortcut(self.toggle_pin))
-        self.bind("<Control-Home>", _shortcut(self.promote_selected))
 
         if self.tray_has_menu:
             self.bind("<Escape>", _shortcut(self.hide_to_tray))
@@ -625,9 +742,11 @@ class ClipStackApp(tk.Tk):
     # -------- MENUS --------
 
     def menu_state(self, enabled: bool) -> str:
+        """Return the Tkinter menu state corresponding to a boolean value."""
         return "normal" if enabled else "disabled"
 
     def menu_checked(self, checked: bool) -> str:
+        """Return the checked or unchecked prefix used in menu labels."""
         return "■ " if checked else "□ "
 
     def _add_tk_submenu(self,parent_menu,label,callback):
@@ -638,11 +757,14 @@ class ClipStackApp(tk.Tk):
 
     def _build_file_menu(self,menu = None, tray: bool = True):
         """Build the File submenu for tray or window menu."""
+        force_label = f"{self.tr('_force_capture')} (Ctrl+R)"
         import_label = f"{self.tr('_import')} (Ctrl+L)"
         export_label = f"{self.tr('_export')} (Ctrl+S)"
 
         if tray:
             return pystray.Menu(
+                pystray.MenuItem(force_label,self._tray_call(self.force_capture)),
+                pystray.Menu.SEPARATOR,
                 pystray.MenuItem(import_label,self._tray_call(self.import_clips)),
                 pystray.MenuItem(export_label,self._tray_call(self.export_clips))
             )
@@ -650,6 +772,8 @@ class ClipStackApp(tk.Tk):
         if menu is None:
             raise ValueError("menu is required when tray=False")
 
+        menu.add_command(label=force_label,command=self.force_capture)
+        menu.add_separator()
         menu.add_command(label=import_label, command=self.import_clips)
         menu.add_command(label=export_label, command=self.export_clips)
 
@@ -676,6 +800,7 @@ class ClipStackApp(tk.Tk):
     def _build_config_menu(self,menu = None, tray: bool = True):
         """Build the Config submenu for tray or window menu."""
         if tray:
+            sort_menu = self._build_sort_menu()
             position_menu = self._build_position_menu()
             scale_menu = self._build_scale_menu()
             language_menu = self._build_language_menu()
@@ -685,6 +810,7 @@ class ClipStackApp(tk.Tk):
                 pystray.MenuItem(f"{self.tr('_show_timestamp')} (Ctrl+T)", self._tray_call(self.toggle_timestamp), checked=lambda item: self.show_timestamp),
                 pystray.MenuItem(f"{self.tr('_hide_when_copy')} (F6)", self._tray_call(self.toggle_hide_after_copy), checked=lambda item: self.hide_after_copy),
                 pystray.Menu.SEPARATOR,
+                pystray.MenuItem(f"{self.tr('_sort_mode')} (Ctrl+M)", sort_menu),
                 pystray.MenuItem(self.tr("_window_pos"), position_menu),
                 pystray.MenuItem(self.tr("_ui_scale"), scale_menu),
                 pystray.Menu.SEPARATOR,
@@ -701,11 +827,43 @@ class ClipStackApp(tk.Tk):
         menu.add_command(label=timestamp_label,command=self.toggle_timestamp)
 
         menu.add_separator()
-        self._add_tk_submenu(menu,self.tr("_window_pos"),self._build_position_menu)
+        self._add_tk_submenu(menu, f"{self.tr('_sort_mode')} (Ctrl+M)", self._build_sort_menu)
+        self._add_tk_submenu(menu, self.tr("_window_pos"),self._build_position_menu)
         self._add_tk_submenu(menu, self.tr("_ui_scale"), self._build_scale_menu)
 
         menu.add_separator()
         self._add_tk_submenu(menu,self.tr("_language"),self._build_language_menu)
+
+    def _build_sort_menu(self, menu=None, tray: bool = True):
+        """Build the sorting mode submenu for tray or window menu."""
+        modes = ("mrc", "mfu")
+
+        if tray:
+            return pystray.Menu(
+                *[
+                    pystray.MenuItem(
+                        self.tr("_" + mode),
+                        self._tray_call(self.set_sort_mode, mode),
+                        checked=self._checked_equals(
+                            lambda: self.sort_mode, mode
+                        )
+                    )
+                    for mode in modes
+                ]
+            )
+
+        if menu is None:
+            raise ValueError("menu is required when tray=False")
+
+        for mode in modes:
+            label = (
+                self.menu_checked(self.sort_mode == mode)
+                + self.tr("_" + mode)
+            )
+            menu.add_command(
+                label=label,
+                command=lambda mode=mode: self.set_sort_mode(mode)
+            )
 
     def _build_position_menu(self,menu = None, tray: bool = True):
         """Build the Position submenu for tray or window menu."""
@@ -796,7 +954,6 @@ class ClipStackApp(tk.Tk):
 
         The menu is rebuilt when language or dynamic checked/enabled states change.
         """
-
         file_menu = self._build_file_menu()
         clear_menu = self._build_clear_menu()
         config_menu = self._build_config_menu()
@@ -811,12 +968,15 @@ class ClipStackApp(tk.Tk):
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(self.tr("_config"), config_menu),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(self.tr("_about"), self._tray_call(self.show_about)),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem(self.tr("_exit"), self._tray_call(self.quit_app)),
         )
 
     def _build_window_menu(self):
         """Build and show the in-window fallback menu."""
-
+        if self.modal_window is not None:
+            return
         menu = tk.Menu(self, tearoff=0)
 
         self._add_tk_submenu(menu,self.tr("_file"), self._build_file_menu)
@@ -828,6 +988,9 @@ class ClipStackApp(tk.Tk):
         self._add_tk_submenu(menu,label=self.tr("_config"), callback=self._build_config_menu)
         menu.add_separator()
 
+        menu.add_command(label=self.tr("_about"), command=self.show_about)
+        menu.add_separator()
+
         menu.add_command(label=self.tr("_exit"), command=self.quit_app)
 
         menu.tk_popup(
@@ -836,8 +999,7 @@ class ClipStackApp(tk.Tk):
         )
 
     def _show_item_menu(self, event):
-        """Show the item item menu, updating labels and enabled state."""
-
+        """Show the item menu, updating labels and enabled state."""
         row = self.tree.identify_row(event.y)
         if row:
             self.tree.selection_set(row)
@@ -863,13 +1025,24 @@ class ClipStackApp(tk.Tk):
 
         for i in range(self.ctx_menu.index("end") + 1):
             try:
-                self.ctx_menu.entryconfigure(i, state=state)
+                enabled = state
+                if i == self.ctx_promote_top_index and has_sel:
+                    enabled = "disabled" if (
+                        self.sort_mode == "mfu" or item is self.store.items[0]
+                    ) else "normal"
+                self.ctx_menu.entryconfigure(i, state=enabled)
             except tk.TclError:
                 pass  # separator
 
         self.ctx_menu.tk_popup(event.x_root, event.y_root)
 
     # ----- LIST CONTROL -----
+
+    def on_max_enter(self, event):
+        """Apply the history limit and return focus to the history list."""
+        self.on_change_max()
+        self.tree.focus_set()
+        return "break"
 
     def on_change_max(self):
         """Update the maximum number of stored clips.
@@ -879,10 +1052,10 @@ class ClipStackApp(tk.Tk):
         """
         try:
             v = int(self.max_var.get())
-            if v < 10:
-                v = 10
+            v = max(10, min(v, 500))
+            self.max_var.set(v)
             self.store.max_items = v
-            self.store._enforce_limit()
+            self.store._enforce_limit(self.sort_mode)
             self.refresh_list(select_first=False)
             self.save_now()
         except (ValueError, tk.TclError):
@@ -894,33 +1067,47 @@ class ClipStackApp(tk.Tk):
         self.refresh_tray_menu()
 
     def on_tree_double_click(self, event):
-        """Copy the selected item when a Treeview row is double-clicked."""
-        self.copy_selected()
+        """Copy the selected item once per rapid click sequence.
+
+        Ignores consecutive double-click events separated by less than
+        500 ms, preventing multiple copies from a single click sequence.
+        """
+        now = time.monotonic()
+        elapsed = now - self._last_double_click
+        self._last_double_click = now
+
+        if elapsed >= 0.5:
+            self.copy_selected()
+
         return "break"
 
     def refresh_list(self, select_first: bool = False, keep_item: Optional[ClipItem] = None):
         """Rebuild the Treeview from the current clipboard history.
 
-        Applies the active text filter, rebuilds the visible item cache, updates
-        the Treeview rows, highlights the item currently present in the system
-        clipboard, refreshes the status line and optionally restores selection.
+        Applies the active text filter and sorts the visible items according
+        to the selected mode (MRC or MFU), without modifying the stored order.
+        Rebuilds the Treeview rows, highlights the current clipboard item,
+        updates the status line and optionally restores the selection.
 
         Args:
             select_first: Select the first visible item after rebuilding the list.
-            keep_item: Keep this item selected if it is still visible after refresh.
+            keep_item: Keep this item selected if it is still visible.
         """
         def fmt_ts(ts: float) -> str:
             return datetime.fromtimestamp(ts).strftime("%Y/%m/%d-%H:%M")
 
-        self.sync_clipboard()
+        sorted_items = self.store.get_sorted_items(self.sort_mode)
 
         query = self.search_var.get()
         self._has_filter = not is_blank(query)
-        if not is_blank(query):
+
+        if self._has_filter:
             q = query.lower()
-            self._filtered_items = [it for it in self.store.items if q in it.text.lower()]
+            self._filtered_items = [
+                it for it in sorted_items if q in it.text.lower()
+            ]
         else:
-            self._filtered_items = list(self.store.items)
+            self._filtered_items = sorted_items
 
         # Treeview: stable iid + map for the current view
         for row in self.tree.get_children():
@@ -940,9 +1127,12 @@ class ClipStackApp(tk.Tk):
             tags = ()
 
             if self._last_clipboard and comparison_key(it.text) == self._last_clipboard:
-                tags = ("current_clipboard",)
+                if "MSX" in it.text.upper():
+                    tags = ("msx_clipboard",)
+                else:
+                    tags = ("current_clipboard",)
 
-            self.tree.insert("", "end", iid=iid, values=(star, fmt_ts(it.ts), one_line_preview(it.text)),tags=tags)
+            self.tree.insert("", "end", iid=iid, values=(star, it.use_count, fmt_ts(it.ts), one_line_preview(it.text)),tags=tags)
 
         self.status_default()
 
@@ -961,10 +1151,10 @@ class ClipStackApp(tk.Tk):
     # ----- CLIPBOARD POLLING -----
 
     def _prime_clipboard(self):
-        """Initialize the clipboard cache with the current clipboard contents.
+        """Update the clipboard cache with the current clipboard contents.
 
-        This prevents existing clipboard text from being added to the history
-        when ClipStack starts.
+        This prevents existing clipboard text from being treated as a new
+        clipboard change.
         """
         try:
             text = normalize_line_endings(self.clipboard_get())
@@ -973,41 +1163,66 @@ class ClipStackApp(tk.Tk):
         except tk.TclError:
             self._last_clipboard = ""
 
+    def capture_clipboard(self, force: bool = False):
+        """Capture clipboard text, optionally ignoring the cached value."""
+        try:
+            text = normalize_line_endings(self.clipboard_get())
+            text_key = comparison_key(text)
+
+            if text_key and (force or text_key != self._last_clipboard):
+                added = self.store.add(text, self.sort_mode)
+                self._last_clipboard = text_key
+                self.refresh_list(select_first=True)
+
+                if added:
+                    self.save_now()
+
+        except tk.TclError:
+            if self._last_clipboard:
+                self._last_clipboard = ""
+                self.refresh_list(select_first=False)
+
     def poll_clipboard(self):
-        """Poll the system clipboard for changes.
-
-        New textual clipboard contents are normalized and added to the history.
-        Non-textual clipboard contents and clipboard access errors are ignored.
-
-        The polling loop reschedules itself continuously using Tk's event queue.
-        """
+        """Poll the clipboard for changes and schedule the next check."""
         if self.closing:
             return
 
         try:
             if self.auto_var:
-                text = normalize_line_endings(self.clipboard_get())
-                text_key = comparison_key(text)
-                if text_key and text_key != self._last_clipboard:
-                    added = self.store.add(text)
-                    self._last_clipboard = text_key
-                    self.refresh_list(select_first=True)
-                    if added:
-                        self.save_now()
-        except tk.TclError:
-            # Clipboard unavailable, empty or contains non-textual data.
-            if self._last_clipboard:
-                self._last_clipboard = ""
-                self.refresh_list(select_first=False)
+                self.capture_clipboard()
         finally:
             self.after(self.poll_ms, self.poll_clipboard)
 
-    def sync_clipboard(self):
-        """Clear the system clipboard if the current clip is no longer stored."""
-        if self._last_clipboard and not any(
-            comparison_key(it.text) == self._last_clipboard
+    def force_capture(self):
+        """Explicitly capture the current clipboard contents."""
+        self.capture_clipboard(force=True)
+
+    def sync_clipboard(self, deleted_items):
+        """Clear the clipboard only if explicitly deleted items contain
+        its current text and no equivalent item remains in the history.
+        """
+        if not deleted_items:
+            return
+
+        try:
+            current = comparison_key(self.clipboard_get())
+        except tk.TclError:
+            return
+
+        if not current:
+            return
+
+        deleted_current = any(
+            comparison_key(it.text) == current
+            for it in deleted_items
+        )
+
+        still_stored = any(
+            comparison_key(it.text) == current
             for it in self.store.items
-        ):
+        )
+
+        if deleted_current and not still_stored:
             try:
                 self.clipboard_clear()
                 self._last_clipboard = ""
@@ -1024,14 +1239,16 @@ class ClipStackApp(tk.Tk):
         return self._view_map.get(sel[0])
 
     def copy_selected(self):
-        """Copy the selected clipboard item to the system clipboard.
+        """Copy the selected item to the system clipboard.
 
-        Updates the cached clipboard value, refreshes the list so the current
-        clipboard item is highlighted, reports the result in the status line and
-        optionally hides the window after copying.
+        On successful copy, increments the item's usage counter and persists
+        the updated history. Refreshes the list to highlight the current
+        clipboard item, reports the result in the status line and optionally
+        hides the window.
         """
         old_last = self._last_clipboard
         item = self.get_selected_item()
+
         if not item:
             return
         try:
@@ -1039,7 +1256,8 @@ class ClipStackApp(tk.Tk):
             self._last_clipboard = comparison_key(item.text)
             self.clipboard_append(item.text)
             self.update_idletasks()
-            self.update()
+            item.use_count += 1
+            self.save_now()
             self.refresh_list(select_first=False, keep_item=item)
             self.set_status_builder(lambda: self.tr("_copy_ok"))
         except tk.TclError:
@@ -1051,18 +1269,26 @@ class ClipStackApp(tk.Tk):
     def toggle_pin(self):
         """Toggle the pinned state of the selected clipboard item.
 
-        The current selection is preserved and the updated history is saved.
+        Unpinning an item may cause it to be removed if the history exceeds
+        the configured limit. The updated history is then saved.
         """
         item = self.get_selected_item()
         if not item:
             return
         real_idx = self.store.items.index(item)
         self.store.toggle_pin(real_idx)
+        self.store._enforce_limit(self.sort_mode)
         self.refresh_list(select_first=False, keep_item=item)
         self.save_now()
 
     def promote_selected(self):
-        """Move the selected item to the top of the clipboard history."""
+        """Move the selected item to the top of the clipboard history.
+
+        Only available in MRC mode. The operation preserves the item's
+        timestamp and usage counter.
+        """
+        if self.sort_mode == "mfu":
+            return
         item = self.get_selected_item()
         if item is None:
             return
@@ -1077,12 +1303,21 @@ class ClipStackApp(tk.Tk):
         self.save_now()
 
     def edit_selected(self):
-        """Open a modal editor for the selected clipboard item."""
+        """Open a modal editor for the selected clipboard item.
+
+        On save, updates the history using the existing deduplication logic,
+        preserving the pinned state and usage counter. If the edited text
+        matches another entry, their usage counters are combined and the
+        item remains pinned if either entry was pinned.
+        """
+        if self.modal_window is not None:
+            return
         it = self.get_selected_item()
         if not it:
             return
 
         win = tk.Toplevel(self)
+        self.modal_window = win
         win.title(self.tr("_edit"))
         win.transient(self)
         win.grab_set()
@@ -1097,29 +1332,18 @@ class ClipStackApp(tk.Tk):
         def save_edit():
             new_text = txt.get("1.0", "end-1c")
 
-            if not new_text.strip():
-                win.destroy()
-                return
+            if new_text.strip():
+                edited_item = self.store.edit(it, new_text)
+                self.refresh_list(select_first=False, keep_item=edited_item)
+                self.save_now()
 
-            # Preserve the pin state before removing the original item.
-            was_pinned = it.pinned
-
-            # Remove the old item, then add the edited text through the store so
-            # MRU promotion and de-duplication stay consistent.
-            real_idx = self.store.items.index(it)
-            self.store.delete(real_idx)
-            self.store.add(new_text)
-
-            edited_item = self.store.items[0]
-            edited_item.pinned = edited_item.pinned or was_pinned
-            self.refresh_list(select_first=False, keep_item=edited_item)
-            self.save_now()
-            win.destroy()
+            self.close_modal()
 
         ttk.Button(btns, text=self.tr("_save"), command=save_edit).pack(side="right")
-        ttk.Button(btns, text=self.tr("_cancel"), command=win.destroy).pack(side="right", padx=(0, self._scale(8)))
+        ttk.Button(btns, text=self.tr("_cancel"), command=self.close_modal).pack(side="right", padx=(0, self._scale(8)))
 
-        win.bind("<Escape>", lambda e: (win.destroy(), "break"))
+        win.bind("<Escape>", lambda e: (self.close_modal(), "break"))
+        win.protocol("WM_DELETE_WINDOW", self.close_modal)
         win.bind("<Control-Return>", lambda e: (save_edit(), "break"))
         win.bind("<Control-KP_Enter>", lambda e: (save_edit(), "break"))
 
@@ -1134,6 +1358,7 @@ class ClipStackApp(tk.Tk):
             return
         real_idx = self.store.items.index(item)
         self.store.delete(real_idx)
+        self.sync_clipboard([item])
         self.refresh_list(select_first=True)
         self.save_now()
 
@@ -1149,21 +1374,29 @@ class ClipStackApp(tk.Tk):
             title=self.tr("_s_file_import"),
             filetypes=FILETYPES
         )
+
         if filename:
-            self.store.load(filename)
-            self.search_var.set("")
-            self.refresh_list()
-            self.save_now()
+            if self.store.load(filename):
+                self.max_var.set(self.store.max_items)
+                self.search_var.set("")
+                self.refresh_list()
+                self.save_now()
+            else:
+                messagebox.showerror(APP_NAME, self.tr("_import_error"))
+
 
     def export_clips(self):
         """Export the current clipboard history to an external file."""
         filename = filedialog.asksaveasfilename(
-            title=self.tr("_s_file_import"),
+            title=self.tr("_s_file_export"),
             defaultextension=".json",
             filetypes=FILETYPES
         )
         if filename:
-            self.store.save(filename)
+            try:
+                self.store.save(filename)
+            except Exception as exc:
+                messagebox.showerror(APP_NAME, self.tr("_export_error"))
 
     def _clear(self,message,callback):
         """Execute a clear operation after user confirmation.
@@ -1176,7 +1409,14 @@ class ClipStackApp(tk.Tk):
         """
         if not messagebox.askyesno(APP_NAME, self.tr(message)):
             return False
+
+        previous_items = list(self.store.items)
         callback()
+        deleted_items = [
+            it for it in previous_items
+            if it not in self.store.items
+        ]
+        self.sync_clipboard(deleted_items)
         self.refresh_list(select_first=True)
         self.save_now()
         return True
@@ -1213,6 +1453,9 @@ class ClipStackApp(tk.Tk):
         to start with clipboard monitoring enabled.
         """
         self.auto_var = not self.auto_var
+
+        if self.auto_var:
+            self._prime_clipboard()
 
     def toggle_timestamp(self):
         """Toggle timestamp column visibility."""
@@ -1253,6 +1496,7 @@ class ClipStackApp(tk.Tk):
                 settings={
                     "language": self.language,
                     "corner": self.corner,
+                    "sort_mode": self.sort_mode,
                     "show_timestamp": self.show_timestamp,
                     "hide_after_copy": self.hide_after_copy,
                     "ui_scale": self.ui_scale
@@ -1264,7 +1508,7 @@ class ClipStackApp(tk.Tk):
     # ----- WINDOW CONTROL -----
 
     def hide_to_tray(self):
-        """Oculta la ventana y deja la app viva en bandeja."""
+        """Hide the window while keeping the application running."""
         self.save_now()
         self.withdraw()
 
@@ -1274,7 +1518,6 @@ class ClipStackApp(tk.Tk):
         If the window has not been fully realized yet, required dimensions are
         used as a fallback because Tk may still report a size of 1x1.
         """
-
         # Ensure geometry information is up to date before calculating the target
         # corner position.
         self.update_idletasks()
@@ -1306,11 +1549,9 @@ class ClipStackApp(tk.Tk):
     def _fit_preview_column(self):
         """Resize the preview column to fill the available Treeview width.
 
-        The pin and timestamp columns keep a fixed width. The preview column
-        expands or shrinks to occupy the remaining horizontal space.
+        Visible fixed-width columns (pin, uses and timestamp) retain their
+        widths. The preview column occupies the remaining horizontal space.
         """
-        self.update_idletasks()
-
         container_w = self.tree.master.winfo_width()
         if container_w <= 1:
             return
@@ -1318,38 +1559,46 @@ class ClipStackApp(tk.Tk):
         vsb_w = self.vsb.winfo_width() if hasattr(self, "vsb") else 0
 
         pin_w = int(self.tree.column("pin", "width"))
+        uses_w = int(self.tree.column("uses", "width")) if "uses" in self.tree["displaycolumns"] else 0
         ts_visible = "ts" in self.tree["displaycolumns"]
         ts_w = int(self.tree.column("ts", "width")) if ts_visible else 0
 
         # Small safety margin to avoid clipping and geometry rounding issues.
         margin = self._scale(12)
 
-        new_w = max(self._scale(PREVIEW_COL_MIN_W), container_w - vsb_w - pin_w - ts_w - margin)
+        new_w = max(self._scale(PREVIEW_COL_MIN_W), container_w - vsb_w - pin_w - uses_w - ts_w - margin)
         self.tree.column("preview", width=new_w)
 
     def apply_treeview_columns(self):
-        """Apply visible Treeview columns and recalculate window layout.
+        """Configure visible Treeview columns and recalculate window layout.
 
-        Toggling the timestamp column resets the window width to the minimum
-        required by the current column layout. Users can resize manually afterwards.
+        The usage column is displayed only in MFU mode, while the timestamp
+        column depends on the user preference. The preview column always
+        remains last and fills the available space.
+
+        Updates the window dimensions and position accordingly.
         """
-        if self.show_timestamp:
-            self.tree["displaycolumns"] = ("pin", "ts", "preview")
-        else:
-            self.tree["displaycolumns"] = ("pin", "preview")
+        columns = ["pin"]
+        if self.sort_mode == "mfu": columns.append("uses")
+        if self.show_timestamp: columns.append("ts")
+        columns.append("preview")
+
+        self.tree["displaycolumns"] = tuple(columns)
+
         self.after(0, self._fit_preview_column)
         self.after(0, self.resize_to_columns)
         self.after(0, self.move_to_corner)
 
     def resize_to_columns(self):
-        """Resize the window to the minimum width required by visible columns.
+        """Resize the window to fit the currently visible Treeview columns.
 
-        Toggling the timestamp column gives ClipStack control of the window width.
-        Users can manually resize the window again afterwards.
+        Calculates the required width from the visible fixed-width columns,
+        the minimum preview width and the surrounding interface elements.
+        Users can manually resize the window afterwards.
         """
-        self.update_idletasks()
-
         fixed_w = self._scale(PIN_COL_W)
+        if "uses" in self.tree["displaycolumns"]:
+            fixed_w += int(self.tree.column("uses", "width"))
         if self.show_timestamp:
             fixed_w += self._timestamp_column_width()
 
@@ -1410,32 +1659,25 @@ class ClipStackApp(tk.Tk):
 
     def _tray_call(self, fn, *args, **kwargs):
         """Return a pystray callback that runs `fn` on the Tk thread."""
+        def _run():
+            if self.modal_window is None:
+                fn(*args, **kwargs)
+
         def _action(icon, item):
-            self.after(0, lambda: fn(*args, **kwargs))
+            self.after(0, _run)
+
         return _action
 
     def _checked_equals(self, getter, value):
         """Return a pystray checked callback comparing `getter()` with `value`."""
         return lambda item: getter() == value
 
-    def _checked_bool(self, getter):
-        """Return a pystray checked callback for a boolean getter."""
-        return lambda item: bool(getter())
-
-    def _load_tray_icon_from_b64(self, b64: str, size: int = 64) -> Image.Image:
-        """Load a tray icon image from a base64-encoded PNG."""
-        raw = base64.b64decode(b64)
-        img = Image.open(io.BytesIO(raw)).convert("RGBA")
-        if size:
-            img = img.resize((size, size), Image.LANCZOS)
-        return img
-
     def setup_tray(self):
         """Create and start the system tray icon in a daemon thread."""
         if self.tray_icon is not None:
             return
 
-        image = self._load_tray_icon_from_b64(ICON_B64, size=64)
+        image = ICON_IMAGE
         menu = self._build_tray_menu()
         self.tray_icon = pystray.Icon(APP_NAME, image, APP_NAME, menu)
 
@@ -1461,6 +1703,103 @@ class ClipStackApp(tk.Tk):
             self.tray_icon.update_menu()
         except Exception:
             pass
+
+    # ----- ABOUT -----
+
+    def check_for_updates(self, win, update_var, update_button):
+        """Check whether a newer ClipStack version is available."""
+        update_var.set(self.tr("_update_checking"))
+        update_button.config(state="disabled")
+
+        def worker():
+            url = "https://api.github.com/repos/SapphiRe-MSX/clipstack/releases/latest"
+
+            try:
+                with urllib.request.urlopen(url, timeout=5) as response:
+                    data = json.load(response)
+                latest_version = data["tag_name"].lstrip("v")
+
+                current = tuple(map(int, APP_VERSION.split(".")))
+                latest = tuple(map(int, latest_version.split(".")))
+
+                if current < latest:
+                    message = self.tr("_update_available").format(version=latest_version)
+                elif current > latest:
+                    message = self.tr("_update_newer")
+                else:
+                    message = self.tr("_update_current")
+
+            except Exception:
+                message = self.tr("_update_error")
+
+            def show_result():
+                if self.modal_window is win:
+                    win.update_idletasks()
+
+                    center_x = win.winfo_x() + win.winfo_width() // 2
+                    center_y = win.winfo_y() + win.winfo_height() // 2
+
+                    update_var.set(message)
+                    update_button.config(state="normal")
+
+                    win.update_idletasks()
+
+                    x = center_x - win.winfo_width() // 2
+                    y = center_y - win.winfo_height() // 2
+
+                    win.geometry(f"+{x}+{y}")
+
+            self.after(0, show_result)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def show_about(self):
+        """Show information about ClipStack."""
+        if self.modal_window is not None:
+            return
+        win = tk.Toplevel(self)
+        self.modal_window = win
+        win.about_icon = tk.PhotoImage(data=ICON_B64)
+        win.title(self.tr("_about"))
+        win.transient(self)
+        win.grab_set()
+        win.resizable(False, False)
+
+        frame = ttk.Frame(win, padding=self._scale(20))
+        frame.pack(fill="both", expand=True)
+
+        header = ttk.Frame(frame)
+        header.pack(pady=(0, self._scale(16)))
+
+        ttk.Label(header, image=win.about_icon).pack(side="left", padx=(0, self._scale(16)))
+
+        info = ttk.Frame(header)
+        info.pack(side="left")
+
+        ttk.Label(info, text=APP_NAME, font=("TkDefaultFont", self._scale(14), "bold")).pack(anchor="w")
+        ttk.Label(info, text=f"{self.tr('_version')} {APP_VERSION}").pack(anchor="w", pady=(self._scale(4), 0))
+        ttk.Label(info, text="SapphiRe-MSX").pack(anchor="w", pady=(self._scale(4), 0))
+
+        update_button = ttk.Button(frame, text=self.tr("_check_updates"))
+        update_button.configure(command=lambda: self.check_for_updates(win, update_var, update_button))
+        update_button.pack(pady=(0, self._scale(8)))
+
+        update_var = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=update_var).pack(pady=(0, self._scale(8)))
+
+        ttk.Button(frame, text=self.tr("_close"), command=self.close_modal).pack()
+
+
+        win.bind("<Escape>", lambda e: (self.close_modal(), "break"))
+        win.protocol("WM_DELETE_WINDOW", self.close_modal)
+
+    # ----- MODAL WINDOWS -----
+
+    def close_modal(self):
+        """Close the current modal window."""
+        if self.modal_window is not None:
+            self.modal_window.destroy()
+            self.modal_window = None
 
     # ----- RESTART/QUIT THE APP -----
 

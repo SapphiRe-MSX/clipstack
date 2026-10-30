@@ -6,12 +6,17 @@ It continuously monitors the system clipboard, stores a configurable history of 
 
 ClipStack is designed to stay out of the way: it can run from the system tray when available, or provide the same functionality through its window menu on desktop environments without tray menu support.
 
+Clipboard monitoring is transparent and does not interfere with normal copy and paste operations. Automatic history management never modifies the system clipboard; only explicit user actions, such as copying or deleting a stored clip, may change its contents.
+
 ## Features
 
 - Clipboard history.
+- Manually force clipboard capture, even when its contents have not changed.
 - Filter as you type.
 - Pin frequently used entries.
-- Manually promote entries to the top of the history.
+- Sort the history by most recently copied (MRC) or most frequently used (MFU).
+- Track how often clips are reused from ClipStack.
+- Manually promote entries to the top of the history in MRC mode.
 - Edit stored clips.
 - Import and export clipboard history.
 - Automatic persistence.
@@ -19,6 +24,7 @@ ClipStack is designed to stay out of the way: it can run from the system tray wh
 - Window menu fallback for desktops without tray support.
 - Adjustable UI scale (100%–200%).
 - Multilingual interface.
+- Manual update checking through GitHub.
 
 ## Compatibility
 
@@ -29,9 +35,17 @@ ClipStack is designed to stay out of the way: it can run from the system tray wh
 | Windows | ✅ | Fully functional with `--no-tray`. |
 | macOS | ❓ | Not tested. |
 
-## Screenshot
+## Screenshots
 
-![ClipStack main window](screenshots/clipstack-main.png)
+### Most recently copied (MRC)
+
+The following screenshots show the same clipboard history in the two available sorting modes.
+
+![ClipStack main window in MRC mode](screenshots/clipstack-mrc.png)
+
+### Most frequently used (MFU)
+
+![ClipStack main window in MFU mode](screenshots/clipstack-mfu.png)
 
 ## Requirements
 
@@ -39,7 +53,7 @@ ClipStack requires **Python 3** and the following libraries:
 
 * **tkinter** (usually included with Python, although some Linux distributions provide it as a separate package).
 * **pystray** for system tray integration.
-* **Pillow** for creating the tray icon.
+* **Pillow** for system tray icon support.
 
 The required Python packages can be installed with:
 
@@ -77,37 +91,49 @@ Use this option on desktop environments that do not support tray menus, or if yo
 
 On its first execution, ClipStack automatically creates the file `.clipstack_history.json` in the user's home directory. No manual setup is required.
 
-Clipboard history and application settings are saved automatically whenever they change, preserving pinned items, timestamps and user preferences between sessions.
+Clipboard history and application settings are saved automatically whenever they change, preserving pinned items, timestamps, usage counters and user preferences (including the sorting mode) between sessions.
 
-The **Export** and **Import** commands allow the clipboard history to be saved to or restored from an external JSON file. Exported files contain only the clipboard history (including pinned items and timestamps); application settings are not exported.
+The **Export** and **Import** commands allow the clipboard history to be saved to or restored from an external JSON file. Exported files contain only the clipboard history (including pinned items, timestamps and usage counters); application settings are not exported.
 
 ## History list
+
+ClipStack offers two sorting modes:
+
+- **Most recently copied (MRC):** displays clips in their stored history order, with newly captured or recaptured text at the top. Manual promotions and edits can also change this order.
+- **Most frequently used (MFU):** displays clips by the number of times they have been copied **from ClipStack**, from highest to lowest. Ties retain the stored MRC order. Automatic clipboard captures do not increase usage counters.
+
+When the history exceeds its configured maximum size, ClipStack automatically removes the last unpinned entry according to the active sorting mode. In MRC mode, this is the least recently copied entry; in MFU mode, it is the least frequently used entry, with MRC order breaking ties.
+
+Pinned entries are never removed automatically. Unpinning an entry removes this protection, so the entry may be immediately discarded if the history is already over its configured limit. If a newly captured clip is immediately discarded because of the history limit, its contents remain available in the system clipboard.
 
 Each entry shows:
 
 - A ★ icon for pinned items.
+- A usage counter in MFU mode.
 - An optional timestamp.
 - A one-line preview of the clipboard contents.
 
-The entry currently stored in the system clipboard is highlighted in green and bold.
+The preview remains the last column, while the usage counter is shown only in MFU mode. The status line indicates the active sorting mode.
+
+The entry currently stored in the system clipboard is normally highlighted in green and bold.
 
 ## Clipboard entry menu
 
-Each clipboard entry provides its own context menu, available by right-clicking the item. Most actions are also available through their associated keyboard shortcuts. Double-clicking an item copies it to the system clipboard. If the **Hide when copy** option is enabled in the Configuration menu, the application window is also hidden.
+Each clipboard entry provides its own context menu, available by right-clicking the item. Most actions are also available through their associated keyboard shortcuts. Double-clicking an item copies it to the system clipboard. Rapid sequences of clicks produce a single copy operation. If the **Hide when copy** option is enabled in the Configuration menu, the application window is also hidden.
 
 Clicking the **pin** column toggles the pinned state of an item without opening the context menu.
 
 ### Copy / Copy and hide *(Enter)*
-  Copy the selected item to the system clipboard.
+  Copy the selected item to the system clipboard and increment its usage counter.
 
 ### Pin / Unpin *(F2)*  
   Pin or unpin the selected item.
 
 ### Promote to top *(Ctrl+Home)*
-  Move the selected item to the top of the clipboard history.
+  Move the selected item to the top of the clipboard history. Available only in MRC mode and disabled when the item is already at the top.
 
 ### Edit *(Ctrl+E)*  
-  Edit the selected item text. The pin state is preserved when editing.
+  Edit the selected item text. The pin state and usage counter are preserved. If editing merges two entries with identical text, their usage counters are added together, and the result remains pinned if either entry was pinned.
 
 ### Delete *(Del)*  
   Remove the selected item.
@@ -129,6 +155,9 @@ Hide the window while keeping ClipStack running in the background.
 The remaining menu entries are available from both the system tray menu and the application window menu.
 
 ### File
+
+- **Force Capture** *(Ctrl+R)*  
+  Manually capture the current clipboard contents, even if the text has not changed since the last check. This allows restoring text that is still in the system clipboard but no longer appears in the history, for example after editing an entry. Force Capture does not modify the clipboard or increment usage counters.
 
 - **Import** *(Ctrl+L)*  
   Load clipboard history from an external file.
@@ -158,6 +187,9 @@ The remaining menu entries are available from both the system tray menu and the 
 - **Hide when copy** *(F6)*  
   Automatically hide the window after copying an item to the clipboard (tray mode only).
 
+- **Sort by** *(Ctrl+M)*  
+  Choose **Most recently copied** (MRC) or **Most frequently used** (MFU). The selected mode is saved between sessions. `Ctrl+M` switches between the two modes when the application window has focus.
+
 - **Window position**  
   Select the screen corner where the window is displayed.
 
@@ -166,6 +198,10 @@ The remaining menu entries are available from both the system tray menu and the 
 
 - **Language**  
   Select the application language.
+
+### About
+
+Display the current ClipStack version and check manually whether a newer release is available on GitHub.
 
 ### Exit
 
@@ -176,18 +212,20 @@ Exit the application.
 | Shortcut | Action |
 |----------|--------|
 | Enter | Copy the selected item |
-| F2 | Pin / Unpin the selected item |
-| Ctrl+Home | Move the selected item to the top |
-| Ctrl+E | Edit the selected item |
 | Del | Delete the selected item |
 | Esc | Hide the window *(tray mode only)* |
+| F2 | Pin / Unpin the selected item |
+| F6 | Toggle **Hide when copy** |
+| Ctrl+Home | Move the selected item to the top *(MRC mode only)* |
+| Ctrl+E | Edit the selected item |
 | Ctrl+L | Import clipboard history |
+| Ctrl+M | Toggle MRC / MFU sorting |
+| Ctrl+R | Force Capture the current clipboard contents |
 | Ctrl+S | Export clipboard history |
 | Ctrl+T | Show / Hide timestamps |
 | Ctrl+Shift+A | Clear all items |
 | Ctrl+Shift+N | Clear items not matching the current filter |
 | Ctrl+Shift+U | Clear unpinned items |
-| F6 | Toggle **Hide when copy** |
 
 ## Localization
 
@@ -198,6 +236,7 @@ The localization system is designed to be easily extended. Contributions adding 
 ## Limitations
 
 - Only text clipboard entries are stored. Images and other clipboard formats are ignored.
+- Automatic clipboard monitoring detects changes in clipboard contents, not individual copy operations. Copying identical text again may therefore go undetected. Use **Force Capture** *(Ctrl+R)* to manually capture the current clipboard contents.
 - Clipboard monitoring is limited to the local user session.
 - Clipboard contents copied from ClipStack may not persist after closing the application, depending on the desktop environment and clipboard backend.
 
